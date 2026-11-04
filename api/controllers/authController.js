@@ -1,6 +1,60 @@
 const admin = require('firebase-admin');
 const axios = require('axios');
 
+exports.googleSso = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({ message: 'Google ID token is required.' });
+    }
+
+    // Verify the Google ID token using Firebase Admin SDK
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const { uid, email, name, picture } = decodedToken;
+
+    const db = admin.firestore();
+    const userRef = db.collection('users').doc(uid);
+    const userDoc = await userRef.get();
+
+    let userData;
+
+    if (!userDoc.exists) {
+      // First-time SSO Sign-In: Auto-create user document in Firestore
+      userData = {
+        uid,
+        email: email || '',
+        displayName: name || email?.split('@')[0] || 'User',
+        photoUrl: picture || '',
+        role: 'admin',
+        siteCode: 'default_site',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      await userRef.set(userData);
+    } else {
+      userData = userDoc.data();
+    }
+
+    return res.status(200).json({
+      message: 'Google SSO Authentication successful!',
+      token: idToken,
+      user: {
+        uid,
+        email: userData.email || email,
+        displayName: userData.displayName || name || '',
+        role: userData.role || 'admin',
+        siteCode: userData.siteCode || 'default_site'
+      }
+    });
+  } catch (error) {
+    console.error('Google SSO Error:', error);
+    return res.status(401).json({
+      message: 'Google SSO verification failed.',
+      error: error.message
+    });
+  }
+};
+
 exports.register = async (req, res) => {
   console.log("--> Registration request received:", req.body);
   try {
@@ -145,7 +199,7 @@ exports.changeEmail = async (req, res) => {
 
     const apiKey = process.env.FIREBASE_API_KEY || "AIzaSyCzgCbT27qyAGR8_yOkkC_E5HPivCi0uLo";
     const loginUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
-    
+
     await axios.post(loginUrl, {
       email: currentEmail,
       password,
@@ -158,7 +212,7 @@ exports.changeEmail = async (req, res) => {
     return res.status(200).json({ message: 'Email updated successfully!' });
   } catch (error) {
     console.error('Change email error:', error.response?.data || error.message);
-    
+
     const errorCode = error.response?.data?.error?.message;
     if (errorCode === 'INVALID_PASSWORD' || errorCode === 'INVALID_LOGIN_CREDENTIALS') {
       return res.status(401).json({ message: 'Incorrect password provided.' });
