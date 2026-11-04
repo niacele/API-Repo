@@ -36,6 +36,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
+const reportsRouter = require('./routes/reports');
+app.use('/api/reports', reportsRouter);
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, '0.0.0.0', () => {
