@@ -2,13 +2,20 @@ require('dotenv').config();
 
 const express = require('express');
 const admin = require('firebase-admin');
-const serviceAccount = require('./firebase-service-account.json');
+//const serviceAccount = require('./firebase-service-account.json');
 
+// if (!admin.apps.length) {
+//   admin.initializeApp({
+//     credential: admin.credential.cert(serviceAccount)
+//   });
+// }
+
+//loads credentails from secrets file
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
+  admin.initializeApp();
 }
+
+const db = admin.firestore();
 
 const app = express();
 
