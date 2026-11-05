@@ -27,11 +27,19 @@ app.use((req, res, next) => {
 });
 
 const authRoutes = require('./routes/authRoutes');
-app.use('/api/auth', authRoutes);
+// app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
+const reportsRouter = require('./routes/reports');
+app.use('/api/reports', reportsRouter);
+
+const notificationsRouter = require('./routes/notifications');
+app.use('/api/notifications', notificationsRouter);
 
 app.get('/', (req, res) => {
   res.send('Groundskeeper API is running successfully!');
 });
+
 
 app.use((req, res) => {
   console.log(`404 Not Found: ${req.method} ${req.url}`);
@@ -43,8 +51,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error', details: err.message });
 });
 
-const reportsRouter = require('./routes/reports');
-app.use('/api/reports', reportsRouter);
+// const reportsRouter = require('./routes/reports');
+// app.use('/api/reports', reportsRouter);
 
 const PORT = process.env.PORT || 5000;
 
