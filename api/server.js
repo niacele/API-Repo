@@ -33,8 +33,8 @@ app.use('/auth', authRoutes);
 const reportsRouter = require('./routes/reports');
 app.use('/api/reports', reportsRouter);
 
-const notificationsRouter = require('./routes/notifications');
-app.use('/api/notifications', notificationsRouter);
+// const notificationsRouter = require('./routes/notifications');
+// app.use('/api/notifications', notificationsRouter);
 
 app.get('/', (req, res) => {
   res.send('Groundskeeper API is running successfully!');
