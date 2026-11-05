@@ -27,8 +27,7 @@ app.use((req, res, next) => {
 });
 
 const authRoutes = require('./routes/authRoutes');
-// app.use('/api/auth', authRoutes);
-app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 
 const reportsRouter = require('./routes/reports');
 app.use('/api/reports', reportsRouter);
