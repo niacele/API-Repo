@@ -15,7 +15,7 @@ exports.googleSso = async (req, res) => {
 
     let uid, email, name, picture;
 
-    // 1. Verify token with Firebase Admin SDK or Google OAuth endpoint
+    // 1. Verify token with Firebase Admin SDK
     try {
       const decodedToken = await admin.auth().verifyIdToken(idToken);
       uid = decodedToken.uid;
@@ -23,30 +23,28 @@ exports.googleSso = async (req, res) => {
       name = decodedToken.name;
       picture = decodedToken.picture;
     } catch (firebaseErr) {
-      console.warn('[SSO] Firebase token verification failed, checking Google OAuth info endpoint...');
+      console.warn('[SSO] Firebase token verification failed, checking Google OAuth tokeninfo...');
+      
+      // Fallback: Verify via Google OAuth2 tokeninfo
+      const googleResponse = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+      const googleData = googleResponse.data;
+      
+      email = googleData.email;
+      name = googleData.name;
+      picture = googleData.picture;
+      uid = googleData.sub; // Use Google 'sub' as fallback UID if Firebase UID is missing
     }
 
-    // Fallback or explicit check via Google tokeninfo if email is still missing
-    if (!email) {
-      try {
-        const googleResponse = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
-        const googleData = googleResponse.data;
-        email = googleData.email;
-        name = name || googleData.name;
-        picture = picture || googleData.picture;
-      } catch (googleErr) {
-        console.error('[SSO] Google tokeninfo lookup failed:', googleErr.message);
-      }
+    if (!uid) {
+      return res.status(401).json({ message: 'Unable to resolve valid user identifier from token.' });
     }
 
     const safeEmail = (email || '').trim().toLowerCase();
-    console.log(`[SSO] Verified Token for Auth UID: ${uid}, Resolved Email: ${safeEmail}`);
-
     const db = admin.firestore();
     let userData;
     let finalUid = uid;
 
-    // 2. SMART MERGE: Check if an account with this email already exists in Firestore!
+    // 2. Check if user profile exists by email
     let existingUserQuery = null;
     if (safeEmail.length > 0) {
       existingUserQuery = await db.collection('users')
@@ -56,12 +54,9 @@ exports.googleSso = async (req, res) => {
     }
 
     if (existingUserQuery && !existingUserQuery.empty) {
-      // Found existing account registered via email/password or previous login!
       const existingDoc = existingUserQuery.docs[0];
       userData = existingDoc.data();
-      finalUid = existingDoc.id; // Keep the original user's Firestore ID and siteCode!
-      
-      console.log(`[SSO] Successfully merged Google SSO with existing user profile: ${finalUid} (Site: ${userData.siteCode})`);
+      finalUid = existingDoc.id;
 
       await db.collection('users').doc(finalUid).set({
         photoUrl: picture || userData.photoUrl || '',
@@ -69,13 +64,10 @@ exports.googleSso = async (req, res) => {
       }, { merge: true });
 
     } else {
-      // 3. Check if document by UID already exists
       const userRef = db.collection('users').doc(uid);
       let userDoc = await userRef.get();
 
       if (!userDoc.exists) {
-        console.log(`[SSO] No existing email match. Provisioning new admin user profile for UID: ${uid}`);
-
         userData = {
           uid,
           email: safeEmail,
@@ -190,7 +182,7 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Please provide email and password.' });
     }
 
-    const apiKey = process.env.FIREBASE_API_KEY || "AIzaSyCzgCbT27qyAGR8_yOkkC_E5HPivCi0uLo";
+    const apiKey = process.env.FIREBASE_API_KEY || "AIzaSyD06hdzX6UDYugcHFUmcdVc9uKuuYIUV8k";
     const loginUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
 
     const firebaseResponse = await axios.post(loginUrl, {

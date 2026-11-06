@@ -37,11 +37,8 @@ const processNewReportNotifications = async (reportData) => {
     adminsSnapshot.forEach((doc) => {
       const adminData = doc.data();
       // Default to real-time push enabled and email disabled if preferences map is uninitialized
-      
-      const prefs = adminData.settings || adminData.preferences || { 
-        realTimeNotifications: true, 
-        emailReports: true 
-        };
+      const prefs = adminData.preferences || { realTimeNotifications: true, emailReports: false };
+
       console.log(`[Notification Engine] Admin ${doc.id} (${adminData.email}) settings:`, prefs);
 
       // Collect FCM device token if admin opted into push notifications
