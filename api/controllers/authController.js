@@ -13,13 +13,35 @@ exports.googleSso = async (req, res) => {
       return res.status(400).json({ message: 'Google ID token is required.' });
     }
 
-    // Verify token with Firebase Admin SDK
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    const { uid, email, name, picture } = decodedToken;
+    let uid, email, name, picture;
+
+    // 1. Verify token with Firebase Admin SDK
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      uid = decodedToken.uid;
+      email = decodedToken.email;
+      name = decodedToken.name;
+      picture = decodedToken.picture;
+    } catch (firebaseErr) {
+      console.warn('[SSO] Firebase token verification failed, checking Google OAuth info endpoint...');
+      
+      const googleResponse = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+      const googleData = googleResponse.data;
+
+      uid = googleData.sub;
+      email = googleData.email;
+      name = googleData.name;
+      picture = googleData.picture;
+    }
+
+    // Guard against undefined email to prevent Firestore crash
+    const safeEmail = email || '';
+
+    console.log(`[SSO] Verified Token for UID: ${uid}, Email: ${safeEmail}`);
 
     const db = admin.firestore();
     
-    // First, try direct lookup by Auth UID
+    // 2. Direct document lookup by Firebase Auth UID
     const userRef = db.collection('users').doc(uid);
     let userDoc = await userRef.get();
 
@@ -27,28 +49,36 @@ exports.googleSso = async (req, res) => {
     let finalUid = uid;
 
     if (!userDoc.exists) {
-      // Check if profile exists under an existing email/password account
-      const existingUserQuery = await db.collection('users')
-        .where('email', '==', email)
-        .limit(1)
-        .get();
+      console.log(`[SSO] Document users/${uid} not found.`);
 
-      if (!existingUserQuery.empty) {
+      // 3. Fallback check by email ONLY IF safeEmail is not empty (Fixes the Render crash!)
+      let existingUserQuery = null;
+      if (safeEmail.length > 0) {
+        existingUserQuery = await db.collection('users')
+          .where('email', '==', safeEmail)
+          .limit(1)
+          .get();
+      }
+
+      if (existingUserQuery && !existingUserQuery.empty) {
         const existingDoc = existingUserQuery.docs[0];
         userData = existingDoc.data();
-        finalUid = existingDoc.id; // Preserve original UID created during registration
+        finalUid = existingDoc.id; // Preserve existing account ID
         
-        // Update login metadata
-        await db.collection('users').doc(finalUid).update({
+        console.log(`[SSO] Merged with existing user document: ${finalUid}`);
+
+        await db.collection('users').doc(finalUid).set({
           photoUrl: picture || userData.photoUrl || '',
           lastLoginAt: admin.firestore.FieldValue.serverTimestamp()
-        });
+        }, { merge: true });
       } else {
-        // New SSO User: Auto-provision document
+        console.log(`[SSO] Provisioning new admin user profile for UID: ${uid}`);
+
+        // 4. Auto-provision new user profile safely
         userData = {
           uid,
-          email: email || '',
-          displayName: name || email?.split('@')[0] || 'User',
+          email: safeEmail,
+          displayName: name || (safeEmail ? safeEmail.split('@')[0] : 'Admin User'),
           photoUrl: picture || '',
           role: 'admin',
           siteCode: 'default_site',
@@ -61,6 +91,7 @@ exports.googleSso = async (req, res) => {
         await userRef.set(userData);
       }
     } else {
+      console.log(`[SSO] Found user profile for UID: ${uid}`);
       userData = userDoc.data();
       finalUid = userDoc.id;
     }
@@ -70,14 +101,14 @@ exports.googleSso = async (req, res) => {
       token: idToken,
       user: {
         uid: finalUid,
-        email: userData.email || email,
+        email: userData.email || safeEmail,
         displayName: userData.displayName || name || '',
         role: userData.role || 'admin',
         siteCode: userData.siteCode || 'default_site'
       }
     });
   } catch (error) {
-    console.error('Google SSO Error:', error);
+    console.error('[SSO Error]:', error.response?.data || error.message);
     return res.status(401).json({
       message: 'Google SSO verification failed.',
       error: error.message
