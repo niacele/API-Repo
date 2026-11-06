@@ -3,6 +3,10 @@ const router = express.Router();
 const admin = require('firebase-admin');
 const { processNewReportNotifications } = require('../controllers/notificationController');
 
+/**
+ * @route   POST /api/reports
+ * @desc    Receives a new maintenance report, persists it to Firestore, and triggers FCM/Email alerts.
+ */
 router.post('/', async (req, res) => {
   try {
     const {
@@ -38,11 +42,11 @@ router.post('/', async (req, res) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    // 1. Save document to Firestore
+    // Save document entry into Firestore
     const docRef = await admin.firestore().collection('reports').add(newReport);
     const savedReport = { id: docRef.id, ...newReport };
 
-    // 2. Dispatch FCM & Email notifications
+    // Trigger Notification Pipeline
     processNewReportNotifications(savedReport);
 
     return res.status(201).json({
@@ -51,7 +55,7 @@ router.post('/', async (req, res) => {
       reportId: docRef.id
     });
   } catch (error) {
-    console.error('Error in POST /api/reports:', error);
+    console.error('Error handling POST /api/reports:', error);
     return res.status(500).json({ success: false, message: 'Server error creating report.' });
   }
 });

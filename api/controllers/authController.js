@@ -1,6 +1,10 @@
 const admin = require('firebase-admin');
 const axios = require('axios');
 
+/**
+ * Handles Google SSO Authentication token verification.
+ * Links or merges with existing email/password user profile if existing.
+ */
 exports.googleSso = async (req, res) => {
   try {
     const { idToken } = req.body;
@@ -9,37 +13,63 @@ exports.googleSso = async (req, res) => {
       return res.status(400).json({ message: 'Google ID token is required.' });
     }
 
-    // Verify the Google ID token using Firebase Admin SDK
+    // Verify token with Firebase Admin SDK
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     const { uid, email, name, picture } = decodedToken;
 
     const db = admin.firestore();
+    
+    // First, try direct lookup by Auth UID
     const userRef = db.collection('users').doc(uid);
-    const userDoc = await userRef.get();
+    let userDoc = await userRef.get();
 
     let userData;
+    let finalUid = uid;
 
     if (!userDoc.exists) {
-      // First-time SSO Sign-In: Auto-create user document in Firestore
-      userData = {
-        uid,
-        email: email || '',
-        displayName: name || email?.split('@')[0] || 'User',
-        photoUrl: picture || '',
-        role: 'admin',
-        siteCode: 'default_site',
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
-      };
-      await userRef.set(userData);
+      // Check if profile exists under an existing email/password account
+      const existingUserQuery = await db.collection('users')
+        .where('email', '==', email)
+        .limit(1)
+        .get();
+
+      if (!existingUserQuery.empty) {
+        const existingDoc = existingUserQuery.docs[0];
+        userData = existingDoc.data();
+        finalUid = existingDoc.id; // Preserve original UID created during registration
+        
+        // Update login metadata
+        await db.collection('users').doc(finalUid).update({
+          photoUrl: picture || userData.photoUrl || '',
+          lastLoginAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      } else {
+        // New SSO User: Auto-provision document
+        userData = {
+          uid,
+          email: email || '',
+          displayName: name || email?.split('@')[0] || 'User',
+          photoUrl: picture || '',
+          role: 'admin',
+          siteCode: 'default_site',
+          preferences: {
+            realTimeNotifications: true,
+            emailReports: false
+          },
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        await userRef.set(userData);
+      }
     } else {
       userData = userDoc.data();
+      finalUid = userDoc.id;
     }
 
     return res.status(200).json({
       message: 'Google SSO Authentication successful!',
       token: idToken,
       user: {
-        uid,
+        uid: finalUid,
         email: userData.email || email,
         displayName: userData.displayName || name || '',
         role: userData.role || 'admin',
@@ -55,6 +85,9 @@ exports.googleSso = async (req, res) => {
   }
 };
 
+/**
+ * Registers a new admin account with site limits enforcement.
+ */
 exports.register = async (req, res) => {
   console.log("--> Registration request received:", req.body);
   try {
@@ -90,6 +123,10 @@ exports.register = async (req, res) => {
       displayName,
       role: 'admin',
       siteCode: targetSiteCode,
+      preferences: {
+        realTimeNotifications: true,
+        emailReports: false
+      },
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 
@@ -111,6 +148,9 @@ exports.register = async (req, res) => {
   }
 };
 
+/**
+ * Authenticates user credentials via Firebase Identity Toolkit.
+ */
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -159,6 +199,9 @@ exports.login = async (req, res) => {
   }
 };
 
+/**
+ * Retrieves profile document for the authenticated user.
+ */
 exports.getProfile = async (req, res) => {
   try {
     const uid = req.user.uid;
@@ -179,6 +222,9 @@ exports.getProfile = async (req, res) => {
   }
 };
 
+/**
+ * Updates user account email in Firebase Auth and Firestore.
+ */
 exports.changeEmail = async (req, res) => {
   try {
     const uid = req.user.uid;
@@ -219,5 +265,35 @@ exports.changeEmail = async (req, res) => {
     }
 
     return res.status(500).json({ message: 'Failed to update email', error: error.message });
+  }
+};
+
+/**
+ * Updates notification preferences (realTimeNotifications & emailReports) for the specified admin.
+ */
+exports.updatePreferences = async (req, res) => {
+  try {
+    const { userId, realTimeNotifications, emailReports } = req.body;
+    const targetUid = userId || req.user?.uid;
+
+    if (!targetUid) {
+      return res.status(400).json({ success: false, message: 'User ID is required.' });
+    }
+
+    const db = admin.firestore();
+    await db.collection('users').doc(targetUid).set({
+      preferences: {
+        realTimeNotifications: Boolean(realTimeNotifications),
+        emailReports: Boolean(emailReports)
+      }
+    }, { merge: true });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Notification preferences updated successfully.'
+    });
+  } catch (error) {
+    console.error('Error updating notification preferences:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update preferences.' });
   }
 };
